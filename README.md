@@ -1258,6 +1258,309 @@ createToggle(contentVisuals, "ESP Line", false, function(state)
     end
 end)
 
+-- Variáveis do sistema
+local revistarCoroutine
+local revistarToggle = false
+local detectados = {}
+
+-- Função para iniciar o revistar automático
+local function iniciarRevistar()
+    if revistarCoroutine then return end
+    revistarToggle = true
+    revistarCoroutine = coroutine.create(function()
+        while revistarToggle do
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                local pos = char.HumanoidRootPart.Position
+                for _, otherPlayer in pairs(Players:GetPlayers()) do
+                    if (otherPlayer ~= LocalPlayer and isDead(otherPlayer) 
+                        and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart")) then
+                        local otherPos = otherPlayer.Character.HumanoidRootPart.Position
+                        if (distanceBetween(pos, otherPos) <= DETECTION_RADIUS) then
+                            if not detectados[otherPlayer] then
+                                detectados[otherPlayer] = true
+                                if dsada then
+                                    pcall(function()
+                                        dsada:FireServer("/revistar morto")
+                                    end)
+                                end
+                            end
+                        else
+                            detectados[otherPlayer] = nil
+                        end
+                    end
+                end
+            end
+            wait(CheckInterval)
+        end
+    end)
+    coroutine.resume(revistarCoroutine)
+    notificar("Revistar Automático", "Ativado!", 2)
+end
+
+-- Função para parar o revistar automático
+local function pararRevistar()
+    revistarToggle = false
+    detectados = {}
+    if revistarCoroutine then
+        coroutine.close(revistarCoroutine)
+        revistarCoroutine = nil
+    end
+    notificar("Revistar Automático", "Desativado!", 2)
+end
+
+-- Toggle do revistar automático
+local function toggleRevistar(state)
+    if state then
+        iniciarRevistar()
+    else
+        pararRevistar()
+    end
+end
+
+-- Integração com o menu (aba Combat)
+createToggle(contentCombat, "Revistar Automático", false, toggleRevistar)
+
+-- Variáveis do sistema
+local ultimoMortoPorVoce = nil
+local teleportou = false
+local teleportAutoAtivo = false -- Começa desativado, controlado pelo toggle
+
+-- Função para teleportar para o último morto
+local function teleportarParaUltimoMorto()
+    if not teleportAutoAtivo then return end
+    if not ultimoMortoPorVoce then return end
+    if teleportou then return end
+
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    if not ultimoMortoPorVoce.Character or not ultimoMortoPorVoce.Character:FindFirstChild("HumanoidRootPart") then
+        ultimoMortoPorVoce = nil
+        return
+    end
+
+    char.HumanoidRootPart.CFrame = ultimoMortoPorVoce.Character.HumanoidRootPart.CFrame + Vector3.new(0,3,0)
+    teleportou = true
+    notificar("Teleporte p/ Kill","Teleportado para o último morto!",2)
+end
+
+-- Monitorar morte dos jogadores
+local function monitorarMorteJogador(p)
+    if p == LocalPlayer then return end
+    local function conectarMorte(char)
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.Died:Connect(function()
+                local creatorTag = humanoid:FindFirstChild("creator") or humanoid:FindFirstChild("Creator")
+                if creatorTag and (creatorTag.Value == LocalPlayer) then
+                    ultimoMortoPorVoce = p
+                    teleportou = false
+                    teleportarParaUltimoMorto()
+                end
+            end)
+        end
+    end
+    p.CharacterAdded:Connect(conectarMorte)
+    if p.Character then conectarMorte(p.Character) end
+end
+
+Players.PlayerAdded:Connect(monitorarMorteJogador)
+for _, p in pairs(Players:GetPlayers()) do monitorarMorteJogador(p) end
+
+-- Toggle do teleport automático (aba Combat)
+local function toggleTeleport(state)
+    teleportAutoAtivo = state
+    if state then
+        notificar("Teleporte p/ Kill","Ativado!",2)
+    else
+        notificar("Teleporte p/ Kill","Desativado!",2)
+    end
+end
+
+createToggle(contentCombat, "Teleporte p/ Último Kill", false, toggleTeleport)
+
+-- Variáveis do sistema
+local espTags = {}
+local espEnabled = false
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- Função para pegar itens equipados
+local function getEquippedItems(player)
+    local equipped = {}
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        for _, item in pairs(backpack:GetChildren()) do
+            if #equipped >= 3 then break end
+            if item:IsA("Tool") then
+                table.insert(equipped, item.Name)
+            end
+        end
+    end
+    if player.Character then
+        for _, item in pairs(player.Character:GetChildren()) do
+            if #equipped >= 3 then break end
+            if item:IsA("Tool") then
+                local alreadyHave = false
+                for _, n in pairs(equipped) do
+                    if n == item.Name then
+                        alreadyHave = true
+                        break
+                    end
+                end
+                if not alreadyHave then
+                    table.insert(equipped, item.Name)
+                end
+            end
+        end
+    end
+    while #equipped < 3 do
+        table.insert(equipped, "")
+    end
+    if #equipped == 0 then
+        equipped = {"Sem inventário","",""}
+    end
+    return equipped
+end
+
+-- Função para ativar/desativar ESP
+local function toggleESP(state)
+    espEnabled = state
+    if espEnabled then
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("Head") then
+                if not espTags[p.UserId] then
+                    local head = p.Character.Head
+                    local billboard = Instance.new("BillboardGui", head)
+                    billboard.Name = "ESP_Tag"
+                    billboard.Size = UDim2.new(0,180,0,80)
+                    billboard.StudsOffset = Vector3.new(0,2,0)
+                    billboard.AlwaysOnTop = true
+
+                    local label = Instance.new("TextLabel", billboard)
+                    label.Size = UDim2.new(1,0,0,24)
+                    label.Position = UDim2.new(0,0,0,0)
+                    label.BackgroundTransparency = 1
+                    label.TextColor3 = Color3.fromRGB(0,170,255)
+                    label.Font = Enum.Font.GothamBold
+                    label.TextStrokeTransparency = 0
+                    label.TextSize = 16
+
+                    local itemsLabels = {}
+                    for i = 1, 3 do
+                        local itemLabel = Instance.new("TextLabel", billboard)
+                        itemLabel.Size = UDim2.new(1,0,0,18)
+                        itemLabel.Position = UDim2.new(0,0,0,24 + ((i-1) * 18))
+                        itemLabel.BackgroundColor3 = Color3.new(0,0,0)
+                        itemLabel.BackgroundTransparency = 0.7
+                        itemLabel.TextColor3 = Color3.new(1,1,1)
+                        itemLabel.Font = Enum.Font.GothamBold
+                        itemLabel.TextStrokeTransparency = 0
+                        itemLabel.TextSize = 14
+                        itemLabel.Text = ""
+                        table.insert(itemsLabels, itemLabel)
+                    end
+
+                    espTags[p.UserId] = {billboard=billboard, label=label, itemsLabels=itemsLabels}
+
+                    RunService:BindToRenderStep("ESP_Update_"..p.UserId, 500, function()
+                        if p.Character and p.Character:FindFirstChild("Head") and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                            local pos = p.Character.Head.Position
+                            local dist = (pos - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+                            local equipped = getEquippedItems(p)
+                            label.Text = p.Name .. " | " .. math.floor(dist) .. "m"
+                            for i = 1, 3 do
+                                itemsLabels[i].Text = (equipped[i] ~= "" and equipped[i]) or ""
+                                itemsLabels[i].Visible = equipped[i] ~= ""
+                            end
+                        else
+                            RunService:UnbindFromRenderStep("ESP_Update_"..p.UserId)
+                            if espTags[p.UserId] and espTags[p.UserId].billboard then
+                                espTags[p.UserId].billboard:Destroy()
+                            end
+                            espTags[p.UserId] = nil
+                        end
+                    end)
+                end
+            end
+        end
+    else
+        for userId, info in pairs(espTags) do
+            RunService:UnbindFromRenderStep("ESP_Update_"..userId)
+            if info.billboard then
+                info.billboard:Destroy()
+            end
+            espTags[userId] = nil
+        end
+    end
+end
+
+-- Integração com o menu (aba Visuals)
+createToggle(contentVisuals, "ESP + Itens", false, toggleESP)
+
+--// Serviços
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RS = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+
+-- Variáveis do Fly
+local flying = false
+local flySpeed = 50
+local moveVec = Vector3.zero
+
+-- Função para ativar/desativar Fly
+local function toggleFly(state)
+    flying = state
+    if not flying and hrp then
+        hrp.Velocity = Vector3.zero
+    end
+    notificar("Fly", flying and "Ativado!" or "Desativado!", 2)
+end
+
+-- Função para aumentar/diminuir velocidade
+local function setFlySpeed(amount)
+    flySpeed = math.max(10, flySpeed + amount)
+end
+
+-- Input para movimento
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.W then moveVec = Vector3.new(0,0,-1) end
+    if input.KeyCode == Enum.KeyCode.S then moveVec = Vector3.new(0,0,1) end
+    if input.KeyCode == Enum.KeyCode.A then moveVec = Vector3.new(-1,0,0) end
+    if input.KeyCode == Enum.KeyCode.D then moveVec = Vector3.new(1,0,0) end
+    if input.KeyCode == Enum.KeyCode.Space then moveVec = Vector3.new(0,1,0) end
+    if input.KeyCode == Enum.KeyCode.LeftShift then moveVec = Vector3.new(0,-1,0) end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.S or
+       input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.D or
+       input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.LeftShift then
+        moveVec = Vector3.zero
+    end
+end)
+
+-- Loop do Fly
+RS.RenderStepped:Connect(function(dt)
+    if flying and hrp then
+        local camCF = workspace.CurrentCamera.CFrame
+        local dir = camCF:VectorToWorldSpace(moveVec)
+        hrp.Velocity = dir * flySpeed
+    end
+end)
+
+-- Integração com menu (aba Combat)
+createToggle(contentCombat, "Fly", false, toggleFly)
+
+-- Exemplos de botões de velocidade (podem ser integrados no menu de config)
+-- createButton(contentCombat, "+ Velocidade Fly", function() setFlySpeed(10) end)
+-- createButton(contentCombat, "- Velocidade Fly", function() setFlySpeed(-10) end)
 
 
 selectTab("Settings")
